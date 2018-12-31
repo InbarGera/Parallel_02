@@ -7,8 +7,8 @@ import time
 class MyQueue(object):
     def __init__(self):
         self.input_end, self.output_end = Pipe(False)
-        self.readLock = Lock()
-        # self.writeLock = Lock()
+        # self.readLock = Lock()
+        self.writeLock = Lock()
 
     def put(self, msg):
         input, output = Pipe()

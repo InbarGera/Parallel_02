@@ -1,22 +1,32 @@
 from numba import cuda
 from numba import njit
 import numpy as np
+import math
 
 
-def convolution_gpu(kernel, image):
-    '''Convolve using gpu
-    Parameters
-    ----------
-    kernel : numpy array
-        A small matrix
-    image : numpy array
-        A larger matrix of the image pixels
-            
-    Return
-    ------
-    An numpy array of same shape as image
-    '''
-    raise NotImplementedError("To be implemented")
+@njit
+def flip_kernel(kernel):
+    kernel_size = (kernel.shape[0], kernel.shape[1])
+    new_kernel = np.zeros(kernel_size)
+
+    x_middle = (int)(kernel.shape[0] / 2 - (kernel.shape[0] / 2) % 1)  # got lazy to include math lib, this is simply floor
+    y_middle = (int)(kernel.shape[1] / 2 - (kernel.shape[1] / 2) % 1)
+
+    for x in range(0, kernel.shape[0]):
+        x_diff = abs(x - x_middle) * 2
+        if (x > x_middle):
+            new_x = x - x_diff
+        else:
+            new_x = x + x_diff
+        for y in range(0, kernel.shape[1]):
+            y_diff = abs(y - y_middle) * 2
+            if (y > y_middle):
+                new_y = y - y_diff
+            else:
+                new_y = y + y_diff
+            new_kernel[x][y] = kernel[new_x][new_y]
+    return new_kernel
+
 
 @njit
 def convolution_numba(kernel, image):
@@ -32,28 +42,11 @@ def convolution_numba(kernel, image):
     ------
     An numpy array of same shape as image
     '''
-    kernel_size = (kernel.shape[0], kernel.shape[1])
-    new_kernel = np.zeros(kernel_size)
+    kernel = flip_kernel(kernel)
 
+    # convolution itself
     x_middle = (int)(kernel.shape[0] / 2 - (kernel.shape[0] / 2) % 1)  # got lazy to include math lib, this is simply floor
     y_middle = (int)(kernel.shape[1] / 2 - (kernel.shape[1] / 2) % 1)
-
-    # first fliping the kernel martix
-    for x in range(0, kernel.shape[0]):
-        x_diff = abs(x - x_middle)*2
-        if (x > x_middle):
-            new_x = x - x_diff
-        else:
-            new_x = x + x_diff
-        for y in range(0, kernel.shape[1]):
-            y_diff = abs(y - y_middle)*2
-            if (y > y_middle):
-                new_y = y - y_diff
-            else:
-                new_y = y + y_diff
-            new_kernel[x][y] = kernel[new_x][new_y]
-
-    kernel = new_kernel # wrote the latter code with kernel, didnt want to change it
 
     rows = image.shape[0]
     cols = image.shape[1]
@@ -71,6 +64,86 @@ def convolution_numba(kernel, image):
             res[i][j] = temp
     return res
 
+
+threads_per_block = 1024
+t = 32
+blocks = 16
+block_line = 4
+def convolution_gpu(kernel, image):
+    '''Convolve using gpu
+    Parameters
+    ----------
+    kernel : numpy array
+        A small matrix
+    image : numpy array
+        A larger matrix of the image pixels
+
+    Return
+    ------
+    An numpy array of same shape as image
+    '''
+
+    kernel = flip_kernel(kernel)
+
+    delta_y_block = math.ceil(image.shape[0] / block_line)
+    delta_x_block = math.ceil(image.shape[1] / block_line)
+
+    Z = np.zeros((image.shape[0], image.shape[1]))
+
+    gpu_arr = cuda.to_device(Z)
+    convolution_kernel[blocks, threads_per_block](kernel, image, delta_x_block, delta_y_block, gpu_arr)
+    res = gpu_arr.copy_to_host()
+
+    return res
+
 @cuda.jit
-def convolution_kernel():
-    pass  # TODO
+def convolution_kernel(kernel, image, delta_x_block, delta_y_block, res):
+    thread_num = cuda.threadIdx.x
+    block_num = cuda.blockIdx.x
+
+    a = 10
+    b = 11
+    c = 12
+    # block offset in the general image
+    x_block_offset = delta_x_block * (block_num % block_line)
+    y_block_offset = delta_y_block * (int)((block_num/block_line - (block_num/block_line % 1.0)))
+
+    # thread offset in the block
+    # t = (threads_per_block/32) # the /32 is a hardcoded fix, make it normal if there is time
+    x_per_thread = (int)((delta_x_block / t) - ((delta_x_block / t) % 1.0)) + 1
+    y_per_thread = (int)((delta_y_block / t) - ((delta_y_block / t) % 1.0)) + 1
+
+    x_thread_offset = (thread_num % t) * x_per_thread
+    y_thread_offset = ((thread_num/t) - ((thread_num/t) % 1)) * y_per_thread
+
+    x_offset = (int)(x_block_offset + x_thread_offset)
+    y_offset = (int)(y_block_offset + y_thread_offset)
+
+    # convolution itself
+    x_middle = (int)(kernel.shape[0] / 2 - (kernel.shape[0] / 2) % 1)
+    y_middle = (int)(kernel.shape[1] / 2 - (kernel.shape[1] / 2) % 1)
+
+    rows = image.shape[0]
+    cols = image.shape[1]
+
+    for i in range(0, y_per_thread):
+        i += y_offset
+        # checking that i is in boundaries of table, and block authority
+        if(i < rows and i >= 0 and (i >= y_block_offset and i < y_block_offset + delta_y_block)):
+            for j in range(0, x_per_thread):
+                j += x_offset
+                # same check for j
+                if((j < cols and j >= 0) and (j >= x_block_offset and j < x_block_offset + delta_x_block)):
+                    # convolution itself
+                    temp = 0
+                    for x in range(0, kernel.shape[0]):
+                        for y in range(0, kernel.shape[1]):
+                            a = i + x - x_middle
+                            b = j + y - y_middle
+                            if (a < rows and a >= 0 and b < cols and b >= 0):
+                                temp += image[a][b] * kernel[x][y]
+                    res[i][j] = temp
+
+
+
+
