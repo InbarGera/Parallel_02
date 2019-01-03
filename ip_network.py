@@ -4,10 +4,8 @@ import re
 from network import *
 from preprocessor import Worker
 
-# TODO: use MyQueue when ready
-from multiprocessing import Queue as ResultQueue
-#from my_queue import MyQueue as ResultQueue
-
+# from multiprocessing import Queue as ResultQueue
+from my_queue import MyQueue as ResultQueue
 
 # This takes long, let's make it async (doesn't help much though)
 class SetJobsWorker(mp.Process):
