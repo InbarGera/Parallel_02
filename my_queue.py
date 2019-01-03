@@ -7,20 +7,15 @@ import time
 class MyQueue(object):
     def __init__(self):
         self.input_end, self.output_end = Pipe(False)
-        # self.readLock = Lock()
         self.writeLock = Lock()
 
     def put(self, msg):
-        input, output = Pipe()
-        output.send(msg)
-
         self.writeLock.acquire(True)
-        self.output_end.send(input)
+        self.output_end.send(msg)
         self.writeLock.release()
 
     def get(self):
-        next_pipe = self.input_end.recv()
-        return next_pipe.recv()
+        return self.input_end.recv()
 
 
 # def threaded_function(queue, arg):
